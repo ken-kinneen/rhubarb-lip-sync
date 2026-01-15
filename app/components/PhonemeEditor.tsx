@@ -163,11 +163,11 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration }
                     waveformColor: "rgba(255, 255, 255, 0.3)",
                     overlayLabelAlign: "center",
                     overlayLabelVerticalAlign: "middle",
-                    overlayLabelPadding: 8,
-                    overlayFontSize: 11,
-                    overlayFontFamily: "Inter, sans-serif",
+                    overlayLabelPadding: 4,
+                    overlayFontSize: 10,
+                    overlayFontFamily: "ui-monospace, monospace",
                     overlayColor: "#ffffff",
-                    overlayOpacity: 0.9,
+                    overlayOpacity: 1,
                 },
                 zoomLevels: [64, 128, 256, 512, 1024, 2048, 4096],
             };
@@ -264,18 +264,31 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration }
         // Remove all existing segments
         peaks.segments.removeAll();
 
-        // Add new segments with better labels
+        // Add new segments with adaptive labels based on duration
         phonemeList.forEach((phoneme, index) => {
-            const duration = ((phoneme.end - phoneme.start) * 1000).toFixed(0);
-            const shapeName = MOUTH_SHAPE_INFO[phoneme.value].name;
+            const durationMs = (phoneme.end - phoneme.start) * 1000;
             const segmentId = `segment-${index}`;
             const isSelected = segmentId === selectedId;
+
+            // Adaptive label based on segment duration
+            // Very narrow (<80ms): just the letter
+            // Narrow (80-200ms): letter + duration
+            // Wide (>200ms): letter + short name + duration
+            let labelText: string;
+            if (durationMs < 80) {
+                labelText = phoneme.value;
+            } else if (durationMs < 200) {
+                labelText = `${phoneme.value} ${durationMs.toFixed(0)}ms`;
+            } else {
+                const shortName = MOUTH_SHAPE_INFO[phoneme.value].name.split(/[-\/]/)[0].trim();
+                labelText = `${phoneme.value} - ${shortName} (${durationMs.toFixed(0)}ms)`;
+            }
 
             peaks.segments.add({
                 id: segmentId,
                 startTime: phoneme.start,
                 endTime: phoneme.end,
-                labelText: `${phoneme.value} - ${shapeName} (${duration}ms)`,
+                labelText,
                 color: isSelected
                     ? getSegmentColor(phoneme.value) + "FF" // Full opacity for selected
                     : getSegmentColor(phoneme.value) + "99", // More visible default

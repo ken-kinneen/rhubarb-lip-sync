@@ -29,7 +29,23 @@ export interface MouthShapeInfo {
   color: string;
 }
 
-/** Complete mouth shape reference */
+/** Mouth shape image configuration */
+export interface MouthShapeImages {
+  mouthUrl: string;      // URL to just the mouth image
+  characterUrl: string;  // URL to full character with this mouth shape
+}
+
+/** Complete mouth shape configuration */
+export interface MouthShapeConfig {
+  info: MouthShapeInfo;
+  images: MouthShapeImages;
+}
+
+/** 
+ * Complete mouth shape reference
+ * @deprecated Use loadMouthShapeConfig() from mouth-shape-config.ts instead
+ * This is kept for backward compatibility
+ */
 export const MOUTH_SHAPE_INFO: Record<MouthShape, MouthShapeInfo> = {
   A: { name: 'Rest', description: 'Closed mouth (rest position)', color: '#6b7280' },
   B: { name: 'M/B/P', description: 'Lips together', color: '#ef4444' },

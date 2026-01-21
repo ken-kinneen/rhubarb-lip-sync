@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useState, useEffect } from "react";
-import { Header, AudioInput, Timeline, MouthShapeDisplay, ResultsPanel, Settings, PhonemeEditor } from "@/app/components";
+import { Header, AudioInput, Timeline, MouthShapeDisplay, CharacterDisplay, ResultsPanel, Settings, PhonemeEditor } from "@/app/components";
 import { AudioInputMethod, PhonemeData } from "@/app/lib/types";
 import { EXAMPLE_AUDIO_FILES } from "@/app/lib/constants";
 import { useAudioPlayback, useAudioProcessor } from "@/app/hooks";
@@ -64,6 +64,47 @@ export default function RhubarbLipSyncApp() {
     const handlePhonemesChange = useCallback((newPhonemes: PhonemeData[]) => {
         setEditablePhonemes(newPhonemes);
     }, []);
+
+    // Track which player is the "source of truth" for playback
+    const [activePlayer, setActivePlayer] = useState<'timeline' | 'editor' | null>(null);
+
+    // Handle time updates from PhonemeEditor to sync the display
+    // This updates the visual state without triggering audio playback
+    const handleEditorTimeUpdate = useCallback((time: number) => {
+        // Only sync if the editor is the active player
+        if (activePlayer === 'editor') {
+            // Use internal method to update time display without affecting audio
+            playback.seek(time);
+        }
+    }, [playback, activePlayer]);
+
+    // Handle play state changes from PhonemeEditor
+    const handleEditorPlayStateChange = useCallback((isPlaying: boolean) => {
+        if (isPlaying) {
+            // Editor started playing - make it the active player and pause Timeline's audio
+            setActivePlayer('editor');
+            if (playback.isPlaying) {
+                playback.pause();
+            }
+        } else {
+            // Editor stopped - clear active player
+            if (activePlayer === 'editor') {
+                setActivePlayer(null);
+            }
+        }
+    }, [playback, activePlayer]);
+
+    // Wrap timeline play/pause to track active player
+    const handleTimelinePlayPause = useCallback(() => {
+        if (!playback.isPlaying) {
+            // Starting playback from timeline
+            setActivePlayer('timeline');
+        } else {
+            // Stopping playback
+            setActivePlayer(null);
+        }
+        playback.togglePlayPause();
+    }, [playback]);
 
     // Handle settings change and reprocess
     const handleSettingsChange = useCallback(
@@ -148,19 +189,29 @@ export default function RhubarbLipSyncApp() {
                     {/* Results Section */}
                     {hasResults && processor.result && (
                         <>
-                            {/* Timeline and Mouth Shape Display */}
+                            {/* Character Display and Timeline - Side by Side */}
                             <div className='grid grid-cols-1 lg:grid-cols-3 gap-6'>
-                                <div className='lg:col-span-2'>
+                                {/* Left side: Character Display and Timeline */}
+                                <div className='lg:col-span-2 space-y-6'>
+                                    {/* Large Character Display */}
+                                    <CharacterDisplay
+                                        phonemes={currentPhonemes}
+                                        currentTime={playback.currentTime}
+                                    />
+                                    
+                                    {/* Timeline */}
                                     <Timeline
                                         waveformData={processor.result.waveformData}
                                         phonemes={currentPhonemes}
                                         currentTime={playback.currentTime}
-                                        isPlaying={playback.isPlaying}
+                                        isPlaying={playback.isPlaying && activePlayer === 'timeline'}
                                         onSeek={playback.seek}
-                                        onPlayPause={playback.togglePlayPause}
+                                        onPlayPause={handleTimelinePlayPause}
                                         duration={processor.result.duration}
                                     />
                                 </div>
+                                
+                                {/* Right side: Mouth Shape Display */}
                                 <div>
                                     <MouthShapeDisplay
                                         phonemes={currentPhonemes}
@@ -176,6 +227,8 @@ export default function RhubarbLipSyncApp() {
                                 phonemes={currentPhonemes}
                                 onPhonemesChange={handlePhonemesChange}
                                 duration={processor.result.duration}
+                                onTimeUpdate={handleEditorTimeUpdate}
+                                onPlayStateChange={handleEditorPlayStateChange}
                             />
 
                             {/* Results Panel */}

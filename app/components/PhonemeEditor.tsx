@@ -27,6 +27,9 @@ interface PhonemeEditorProps {
     phonemes: PhonemeData[];
     onPhonemesChange: (phonemes: PhonemeData[]) => void;
     duration: number;
+    // Callbacks to sync with parent's playback state
+    onTimeUpdate?: (time: number) => void;
+    onPlayStateChange?: (isPlaying: boolean) => void;
 }
 
 // Color mapping for segments
@@ -40,7 +43,7 @@ interface HistoryEntry {
     description: string;
 }
 
-export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration }: PhonemeEditorProps) {
+export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, onTimeUpdate, onPlayStateChange }: PhonemeEditorProps) {
     // Refs for Peaks.js containers
     const overviewContainerRef = useRef<HTMLDivElement>(null);
     const zoomContainerRef = useRef<HTMLDivElement>(null);
@@ -235,14 +238,17 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration }
 
                     peaks.on("player.timeupdate", (time: number) => {
                         setCurrentTime(time);
+                        onTimeUpdate?.(time);
                     });
 
                     peaks.on("player.playing", () => {
                         setIsPlaying(true);
+                        onPlayStateChange?.(true);
                     });
 
                     peaks.on("player.pause", () => {
                         setIsPlaying(false);
+                        onPlayStateChange?.(false);
                     });
 
                     // Set initial zoom

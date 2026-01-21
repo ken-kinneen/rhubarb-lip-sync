@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useMemo } from 'react';
-import Image from 'next/image';
-import { PhonemeData, MOUTH_SHAPE_INFO, MouthShape } from '@/app/lib/types';
-import { MouthShapeSVG } from './MouthShapeSVG';
+import React, { useMemo, useState, useEffect } from 'react';
+import { PhonemeData, MouthShape, MouthShapeConfig } from '@/app/lib/types';
+import { loadMouthShapeConfig } from '@/app/lib/mouth-shape-config';
 
 interface MouthShapeDisplayProps {
   phonemes: PhonemeData[];
@@ -12,18 +11,30 @@ interface MouthShapeDisplayProps {
 }
 
 export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayProps) {
+  const [mouthShapeConfig, setMouthShapeConfig] = useState<Record<MouthShape, MouthShapeConfig>>({} as Record<MouthShape, MouthShapeConfig>);
+  
+  // Load mouth shape configuration
+  useEffect(() => {
+    setMouthShapeConfig(loadMouthShapeConfig());
+  }, []);
+  
   // Find current phoneme based on playback time
   const currentPhoneme = useMemo(() => {
     if (phonemes.length === 0) return null;
     return phonemes.find(p => currentTime >= p.start && currentTime < p.end) || phonemes[0];
   }, [phonemes, currentTime]);
 
-  if (phonemes.length === 0) {
+  if (phonemes.length === 0 || !mouthShapeConfig || Object.keys(mouthShapeConfig).length === 0) {
     return null;
   }
 
   const currentShape = currentPhoneme?.value || 'X';
-  const shapeInfo = MOUTH_SHAPE_INFO[currentShape];
+  const config = mouthShapeConfig[currentShape];
+  const shapeInfo = config?.info;
+
+  if (!shapeInfo) {
+    return null;
+  }
 
   return (
     <div className="card-base overflow-hidden h-full">
@@ -35,7 +46,7 @@ export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayPr
       {/* Large mouth shape display */}
       <div className="p-6">
         <div className="flex flex-col items-center justify-center py-6">
-          {/* Official Rhubarb mouth shape image */}
+          {/* Mouth-only image */}
           <div className="mb-4 relative">
             <div 
               className="rounded-2xl overflow-hidden border-4 transition-all duration-100 shadow-2xl"
@@ -44,14 +55,19 @@ export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayPr
                 boxShadow: `0 0 40px ${shapeInfo.color}40`,
               }}
             >
-              <Image
-                src={`/mouth-shapes/lisa-${currentShape}.png`}
-                alt={`Mouth shape ${currentShape}: ${shapeInfo.name}`}
-                width={200}
-                height={200}
-                className="bg-white"
-                priority
-              />
+              {config?.images?.mouthUrl ? (
+                <img
+                  src={config.images.mouthUrl}
+                  alt={`Mouth shape ${currentShape}: ${shapeInfo.name}`}
+                  width={200}
+                  height={200}
+                  className="bg-white object-contain"
+                />
+              ) : (
+                <div className="w-[200px] h-[200px] bg-[#1a1a1a] flex items-center justify-center text-4xl font-bold text-[#6b6b6b]">
+                  {currentShape}
+                </div>
+              )}
             </div>
           </div>
 
@@ -109,8 +125,11 @@ export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayPr
           All Shapes
         </div>
         <div className="grid grid-cols-3 gap-2">
-          {(Object.keys(MOUTH_SHAPE_INFO) as MouthShape[]).map((shape) => {
-            const info = MOUTH_SHAPE_INFO[shape];
+          {(Object.keys(mouthShapeConfig) as MouthShape[]).map((shape) => {
+            const shapeConfig = mouthShapeConfig[shape];
+            if (!shapeConfig) return null;
+            
+            const info = shapeConfig.info;
             const isActive = shape === currentShape;
             
             return (
@@ -130,13 +149,19 @@ export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayPr
                     borderColor: isActive ? info.color : 'transparent',
                   }}
                 >
-                  <Image
-                    src={`/mouth-shapes/lisa-${shape}.png`}
-                    alt={`Shape ${shape}`}
-                    width={50}
-                    height={50}
-                    className="bg-white"
-                  />
+                  {shapeConfig.images?.mouthUrl ? (
+                    <img
+                      src={shapeConfig.images.mouthUrl}
+                      alt={`Shape ${shape}`}
+                      width={50}
+                      height={50}
+                      className="bg-white object-contain w-[50px] h-[50px]"
+                    />
+                  ) : (
+                    <div className="w-[50px] h-[50px] bg-[#1a1a1a] flex items-center justify-center text-lg font-bold text-[#6b6b6b]">
+                      {shape}
+                    </div>
+                  )}
                 </div>
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"

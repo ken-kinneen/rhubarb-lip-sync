@@ -39,6 +39,7 @@
     "eslint-config-next": "13.5.1",
     "konva": "^10.0.12",
     "lucide-react": "^0.446.0",
+    "mediabunny": "^1.31.0",
     "next": "13.5.1",
     "next-themes": "^0.3.0",
     "peaks.js": "^4.0.0",
@@ -53,4 +54,3 @@
     "waveform-data": "^4.5.2"
   }
 }
-

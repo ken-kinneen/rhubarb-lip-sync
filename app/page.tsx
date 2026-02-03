@@ -236,6 +236,7 @@ export default function RhubarbLipSyncApp() {
                                 phonemes={currentPhonemes}
                                 duration={processor.result.duration}
                                 processingTime={processor.result.processingTime}
+                                audioBlob={currentAudioBlob}
                             />
                         </>
                     )}

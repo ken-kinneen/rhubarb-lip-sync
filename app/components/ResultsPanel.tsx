@@ -1,20 +1,31 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
-import { Download, Copy, Check, ChevronDown, ChevronUp } from "lucide-react";
+import React, { useState, useMemo, useEffect } from "react";
+import { Download, Copy, Check, ChevronDown, ChevronUp, Film, Loader2 } from "lucide-react";
 import { PhonemeData, MOUTH_SHAPE_INFO } from "@/app/lib/types";
 import { exportPhonemeJSON } from "@/app/lib/rhubarb-api";
 import { UI } from "@/app/lib/constants";
+import { exportVideo, downloadBlob, isWebCodecsSupported, ExportProgress } from "@/app/lib/video-exporter";
 
 interface ResultsPanelProps {
     phonemes: PhonemeData[];
     duration: number;
     processingTime: number;
+    audioBlob?: Blob | null;
 }
 
-export function ResultsPanel({ phonemes, duration, processingTime }: ResultsPanelProps) {
+export function ResultsPanel({ phonemes, duration, processingTime, audioBlob }: ResultsPanelProps) {
     const [copied, setCopied] = useState(false);
     const [showFullJson, setShowFullJson] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+    const [exportError, setExportError] = useState<string | null>(null);
+    const [webCodecsSupported, setWebCodecsSupported] = useState(true);
+
+    // Check WebCodecs support on mount
+    useEffect(() => {
+        setWebCodecsSupported(isWebCodecsSupported());
+    }, []);
 
     const jsonOutput = useMemo(() => exportPhonemeJSON(phonemes, duration), [phonemes, duration]);
 
@@ -59,6 +70,31 @@ export function ResultsPanel({ phonemes, duration, processingTime }: ResultsPane
         }
     };
 
+    const handleExportVideo = async () => {
+        if (!audioBlob || isExporting) return;
+
+        setIsExporting(true);
+        setExportError(null);
+        setExportProgress(null);
+
+        try {
+            const videoBlob = await exportVideo({
+                audioBlob,
+                phonemes,
+                duration,
+                onProgress: setExportProgress,
+            });
+
+            downloadBlob(videoBlob, `lipsync-${Date.now()}.mp4`);
+        } catch (error) {
+            console.error("Failed to export video:", error);
+            setExportError(error instanceof Error ? error.message : "Failed to export video");
+        } finally {
+            setIsExporting(false);
+            setExportProgress(null);
+        }
+    };
+
     if (phonemes.length === 0) {
         return null;
     }
@@ -82,12 +118,54 @@ export function ResultsPanel({ phonemes, duration, processingTime }: ResultsPane
                             </>
                         )}
                     </button>
-                    <button onClick={handleDownload} className='btn-primary flex items-center gap-2'>
+                    <button onClick={handleDownload} className='btn-secondary flex items-center gap-2'>
                         <Download className='w-4 h-4' />
-                        Download JSON
+                        JSON
                     </button>
+                    {webCodecsSupported && audioBlob && (
+                        <button
+                            onClick={handleExportVideo}
+                            disabled={isExporting}
+                            className='btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed'
+                        >
+                            {isExporting ? (
+                                <>
+                                    <Loader2 className='w-4 h-4 animate-spin' />
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>
+                                    <Film className='w-4 h-4' />
+                                    Export MP4
+                                </>
+                            )}
+                        </button>
+                    )}
                 </div>
             </div>
+
+            {/* Export progress indicator */}
+            {isExporting && exportProgress && (
+                <div className='px-6 py-3 bg-[#1a1a1a] border-b border-[#333333]'>
+                    <div className='flex items-center justify-between mb-2'>
+                        <span className='text-sm text-[#a8a8a8]'>{exportProgress.message}</span>
+                        <span className='text-sm font-mono text-[#8b5cf6]'>{exportProgress.progress}%</span>
+                    </div>
+                    <div className='w-full h-2 bg-[#333333] rounded-full overflow-hidden'>
+                        <div
+                            className='h-full bg-[#8b5cf6] transition-all duration-200'
+                            style={{ width: `${exportProgress.progress}%` }}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Export error */}
+            {exportError && (
+                <div className='px-6 py-3 bg-red-500/10 border-b border-red-500/30'>
+                    <p className='text-sm text-red-400'>{exportError}</p>
+                </div>
+            )}
 
             {/* Statistics */}
             <div className='grid grid-cols-2 md:grid-cols-4 gap-px bg-[#333333]'>

@@ -81,6 +81,13 @@ export function useAudioProcessor() {
         processingRef.current = false;
     }, []);
 
+    // Restore a previously processed result (for persistence)
+    const restoreResult = useCallback((restoredResult: ProcessingResult) => {
+        setResult(restoredResult);
+        setStatus('success');
+        setError(null);
+    }, []);
+
     // Check if currently processing
     const isProcessing = status === 'processing';
 
@@ -91,6 +98,7 @@ export function useAudioProcessor() {
         result,
         processAudio,
         reset,
+        restoreResult,
     };
 }
 

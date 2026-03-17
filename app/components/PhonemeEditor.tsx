@@ -17,7 +17,9 @@ import {
     Volume2,
     ChevronLeft,
     ChevronRight,
-    Keyboard,
+    MousePointer2,
+    Plus,
+    Settings,
 } from "lucide-react";
 import { PhonemeData, MouthShape, MOUTH_SHAPE_INFO } from "@/app/lib/types";
 import { formatTime } from "@/app/lib/audio-utils";
@@ -30,6 +32,10 @@ interface PhonemeEditorProps {
     // Callbacks to sync with parent's playback state
     onTimeUpdate?: (time: number) => void;
     onPlayStateChange?: (isPlaying: boolean) => void;
+    // Enable drag-and-drop insertion
+    enableDragDrop?: boolean;
+    // Settings callback
+    onSettingsClick?: () => void;
 }
 
 // Color mapping for segments
@@ -43,12 +49,19 @@ interface HistoryEntry {
     description: string;
 }
 
-export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, onTimeUpdate, onPlayStateChange }: PhonemeEditorProps) {
+export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, onTimeUpdate, onPlayStateChange, enableDragDrop = true, onSettingsClick }: PhonemeEditorProps) {
     // Refs for Peaks.js containers
     const overviewContainerRef = useRef<HTMLDivElement>(null);
     const zoomContainerRef = useRef<HTMLDivElement>(null);
     const audioElementRef = useRef<HTMLAudioElement>(null);
     const peaksRef = useRef<PeaksInstance | null>(null);
+    
+    // Refs to hold latest values for use in Peaks.js event handlers (avoids stale closure)
+    const phonemesRef = useRef<PhonemeData[]>(phonemes);
+    phonemesRef.current = phonemes;
+    
+    const onPhonemesChangeRef = useRef(onPhonemesChange);
+    onPhonemesChangeRef.current = onPhonemesChange;
 
     // State
     const [isPlaying, setIsPlaying] = useState(false);
@@ -56,7 +69,6 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
     const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
     const [zoomLevel, setZoomLevel] = useState(256);
     const [isLoaded, setIsLoaded] = useState(false);
-    const [showShortcuts, setShowShortcuts] = useState(false);
 
     // Context menu state
     const [contextMenu, setContextMenu] = useState<{
@@ -73,6 +85,10 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
     // Undo/Redo history
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
+
+    // Drag-and-drop state
+    const [isDragOver, setIsDragOver] = useState(false);
+    const [dragDropTime, setDragDropTime] = useState<number | null>(null);
 
     // Add to history when phonemes change
     const addToHistory = useCallback(
@@ -91,6 +107,10 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
         },
         [historyIndex]
     );
+    
+    // Ref for addToHistory to use in Peaks.js event handlers
+    const addToHistoryRef = useRef(addToHistory);
+    addToHistoryRef.current = addToHistory;
 
     // Undo
     const undo = useCallback(() => {
@@ -193,6 +213,14 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                         handleSegmentDrag(event);
                     });
 
+                    // Emit time updates during segment dragging for real-time preview
+                    peaks.on("segments.dragged", (event: SegmentDragEvent) => {
+                        // Update time to the segment's current position during drag
+                        const midTime = (event.segment.startTime + event.segment.endTime) / 2;
+                        setCurrentTime(midTime);
+                        onTimeUpdate?.(midTime);
+                    });
+
                     peaks.on("segments.click", (event: { segment: Segment; evt?: MouseEvent }) => {
                         const segmentId = event.segment.id || null;
                         setSelectedSegmentId(segmentId);
@@ -206,6 +234,7 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                         // Check if right-click
                         if (event.evt && event.evt.button === 2) {
                             event.evt.preventDefault();
+                            event.evt.stopPropagation();
                             setSelectedSegmentId(segmentId);
                             setSelectedBoundaryIndex(null);
                             setContextMenu({
@@ -239,6 +268,18 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                     peaks.on("player.timeupdate", (time: number) => {
                         setCurrentTime(time);
                         onTimeUpdate?.(time);
+                    });
+
+                    // Listen for zoomview seek events (when user clicks on waveform)
+                    peaks.on("zoomview.click", (event: { time: number }) => {
+                        setCurrentTime(event.time);
+                        onTimeUpdate?.(event.time);
+                    });
+
+                    // Listen for overview seek events
+                    peaks.on("overview.click", (event: { time: number }) => {
+                        setCurrentTime(event.time);
+                        onTimeUpdate?.(event.time);
                     });
 
                     peaks.on("player.playing", () => {
@@ -310,43 +351,58 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
         }
     }, [phonemes, isLoaded, selectedSegmentId, updateSegments]);
 
-    // Handle segment drag
+    // Handle segment drag - uses refs to always get latest values (avoids stale closure in Peaks.js events)
     const handleSegmentDrag = useCallback(
         (event: SegmentDragEvent) => {
             const segment = event.segment;
             const segmentId = segment.id;
             if (!segmentId) return;
 
+            // Use refs to get the LATEST values (not stale closure values)
+            const currentPhonemes = phonemesRef.current;
+            
             const index = parseInt(segmentId.replace("segment-", ""), 10);
-            if (isNaN(index) || index < 0 || index >= phonemes.length) return;
+            if (isNaN(index) || index < 0 || index >= currentPhonemes.length) return;
 
-            const newPhonemes = [...phonemes];
-            const oldPhoneme = newPhonemes[index];
+            // Get the current phoneme data (preserves shape changes made via context menu)
+            const currentPhoneme = currentPhonemes[index];
+            
+            // Clamp the new times to prevent overlapping with adjacent segments
+            // Gaps are allowed, but overlaps are not
+            let newStart = segment.startTime;
+            let newEnd = segment.endTime;
+            
+            // Don't allow start to go before 0 or overlap with previous segment's end
+            if (index > 0) {
+                const prevEnd = currentPhonemes[index - 1].end;
+                newStart = Math.max(newStart, prevEnd);
+            } else {
+                newStart = Math.max(newStart, 0);
+            }
+            
+            // Don't allow end to overlap with next segment's start
+            if (index < currentPhonemes.length - 1) {
+                const nextStart = currentPhonemes[index + 1].start;
+                newEnd = Math.min(newEnd, nextStart);
+            }
+            
+            // Ensure minimum segment duration
+            if (newEnd - newStart < 0.02) {
+                return; // Don't allow segments smaller than 20ms
+            }
 
+            const newPhonemes = [...currentPhonemes];
             newPhonemes[index] = {
-                ...oldPhoneme,
-                start: segment.startTime,
-                end: segment.endTime,
+                ...currentPhoneme,
+                start: newStart,
+                end: newEnd,
             };
 
-            // Adjust adjacent segments if needed
-            if (index > 0 && newPhonemes[index].start < newPhonemes[index - 1].end) {
-                newPhonemes[index - 1] = {
-                    ...newPhonemes[index - 1],
-                    end: newPhonemes[index].start,
-                };
-            }
-            if (index < newPhonemes.length - 1 && newPhonemes[index].end > newPhonemes[index + 1].start) {
-                newPhonemes[index + 1] = {
-                    ...newPhonemes[index + 1],
-                    start: newPhonemes[index].end,
-                };
-            }
-
-            addToHistory(newPhonemes, "Resize segment");
-            onPhonemesChange(newPhonemes);
+            // Use refs to call latest callbacks
+            addToHistoryRef.current(newPhonemes, "Resize segment");
+            onPhonemesChangeRef.current(newPhonemes);
         },
-        [phonemes, onPhonemesChange, addToHistory]
+        [] // No dependencies - uses refs for all external values
     );
 
     // Change shape of selected segment
@@ -454,6 +510,120 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
         addToHistory(newPhonemes, "Merge segments");
         onPhonemesChange(newPhonemes);
     }, [selectedSegmentId, phonemes, onPhonemesChange, addToHistory]);
+
+    // Insert a new shape at a specific time
+    const insertShapeAtTime = useCallback(
+        (shape: MouthShape, time: number) => {
+            // Find which segment contains this time
+            const segmentIndex = phonemes.findIndex((p) => time >= p.start && time < p.end);
+            
+            if (segmentIndex === -1) {
+                // Time is outside all segments, insert at the end or beginning
+                if (time >= (phonemes[phonemes.length - 1]?.end || 0)) {
+                    // Insert at the end
+                    const lastEnd = phonemes[phonemes.length - 1]?.end || 0;
+                    const newPhonemes = [...phonemes, {
+                        start: lastEnd,
+                        end: Math.min(lastEnd + 0.1, duration),
+                        value: shape,
+                    }];
+                    addToHistory(newPhonemes, `Insert ${shape}`);
+                    onPhonemesChange(newPhonemes);
+                }
+                return;
+            }
+
+            const segment = phonemes[segmentIndex];
+            const minDuration = 0.02; // Minimum segment duration
+
+            // Don't split if too close to edges
+            if (time - segment.start < minDuration || segment.end - time < minDuration) {
+                // Just change the shape of the current segment instead
+                const newPhonemes = [...phonemes];
+                newPhonemes[segmentIndex] = { ...segment, value: shape };
+                addToHistory(newPhonemes, `Change to ${shape}`);
+                onPhonemesChange(newPhonemes);
+                return;
+            }
+
+            // Split the segment and insert the new shape
+            const insertDuration = Math.min(0.1, (segment.end - time) / 2); // New shape duration
+            const newPhonemes = [...phonemes];
+            
+            newPhonemes.splice(
+                segmentIndex,
+                1,
+                { start: segment.start, end: time, value: segment.value },
+                { start: time, end: time + insertDuration, value: shape },
+                { start: time + insertDuration, end: segment.end, value: segment.value }
+            );
+
+            addToHistory(newPhonemes, `Insert ${shape}`);
+            onPhonemesChange(newPhonemes);
+            setSelectedSegmentId(`segment-${segmentIndex + 1}`);
+        },
+        [phonemes, duration, onPhonemesChange, addToHistory]
+    );
+
+    // Insert shape at current playhead position
+    const insertShapeAtPlayhead = useCallback(
+        (shape: MouthShape) => {
+            insertShapeAtTime(shape, currentTime);
+        },
+        [insertShapeAtTime, currentTime]
+    );
+
+    // Handle drag over for drop zone
+    const handleDragOver = useCallback(
+        (e: React.DragEvent) => {
+            if (!enableDragDrop) return;
+            
+            const hasShape = e.dataTransfer.types.includes('application/x-mouth-shape');
+            if (!hasShape) return;
+
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            setIsDragOver(true);
+
+            // Calculate drop time from mouse position
+            const rect = zoomContainerRef.current?.getBoundingClientRect();
+            if (!rect || !peaksRef.current || !duration) return;
+
+            const view = peaksRef.current.views.getView('zoomview');
+            if (!view) return;
+
+            const startTime = view.getStartTime();
+            const endTime = view.getEndTime();
+            const visibleDuration = endTime - startTime;
+            const clickRatio = (e.clientX - rect.left) / rect.width;
+            const dropTime = startTime + clickRatio * visibleDuration;
+            
+            setDragDropTime(Math.max(0, Math.min(dropTime, duration)));
+        },
+        [enableDragDrop, duration]
+    );
+
+    const handleDragLeave = useCallback(() => {
+        setIsDragOver(false);
+        setDragDropTime(null);
+    }, []);
+
+    const handleDrop = useCallback(
+        (e: React.DragEvent) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            
+            const shape = e.dataTransfer.getData('application/x-mouth-shape') as MouthShape;
+            if (!shape || !dragDropTime) {
+                setDragDropTime(null);
+                return;
+            }
+
+            insertShapeAtTime(shape, dragDropTime);
+            setDragDropTime(null);
+        },
+        [dragDropTime, insertShapeAtTime]
+    );
 
     // Delete boundary at specific index (merge segments on either side)
     const deleteBoundary = useCallback(
@@ -681,7 +851,7 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
     const mouthShapes: MouthShape[] = ["A", "B", "C", "D", "E", "F", "G", "H", "X"];
 
     return (
-        <div className='card-base overflow-hidden'>
+        <div className='card-base overflow-hidden' onContextMenu={(e) => e.preventDefault()}>
             {/* Custom styles for Peaks.js segments */}
             <style jsx global>{`
                 /* Make segments more visible and interactive */
@@ -701,20 +871,39 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
             `}</style>
 
             {/* Header */}
-            <div className='flex items-center justify-between px-6 py-4 border-b border-[#333333]'>
+            <div className='flex items-center justify-between px-6 py-3 border-b border-[#333333]'>
                 <div className='flex items-center gap-3'>
                     <h2 className='text-lg font-semibold text-[#f5f5f5]'>Phoneme Editor</h2>
                     <span className='px-2 py-0.5 text-xs bg-[#8b5cf6]/20 text-[#8b5cf6] rounded-full'>{phonemes.length} segments</span>
+                    <span className='hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 text-xs bg-[#333333] text-[#a8a8a8] rounded-full'>
+                        <MousePointer2 className='w-3 h-3' />
+                        Right-click segment to edit
+                    </span>
                 </div>
                 <div className='flex items-center gap-3'>
+                    <div className='flex items-center gap-2'>
+                        <button onClick={zoomIn} className='btn-ghost p-1' title='Zoom in (+)'>
+                            <ZoomIn className='w-4 h-4' />
+                        </button>
+                        <span className='text-xs text-[#6b6b6b] font-mono min-w-[50px] text-center'>{zoomLevel}x</span>
+                        <button onClick={zoomOut} className='btn-ghost p-1' title='Zoom out (-)'>
+                            <ZoomOut className='w-4 h-4' />
+                        </button>
+                    </div>
+                    <div className='w-px h-5 bg-[#333333]' />
                     <span className='text-sm font-mono text-[#a8a8a8]'>
                         <span className='text-[#8b5cf6]'>{formatTime(currentTime)}</span>
                         <span className='text-[#4a4a4a] mx-1'>/</span>
                         <span>{formatTime(duration)}</span>
                     </span>
-                    <button onClick={() => setShowShortcuts(!showShortcuts)} className='btn-ghost p-2' title='Keyboard shortcuts'>
-                        <Keyboard className='w-4 h-4' />
-                    </button>
+                    {onSettingsClick && (
+                        <>
+                            <div className='w-px h-5 bg-[#333333]' />
+                            <button onClick={onSettingsClick} className='btn-ghost p-1.5' title='Shape Settings'>
+                                <Settings className='w-4 h-4' />
+                            </button>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -724,29 +913,18 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
             {/* Overview waveform (full timeline) */}
             <div className='relative bg-[#1a1a1a] border-b border-[#333333]'>
                 <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] px-4 py-2'>Overview</div>
-                <div ref={overviewContainerRef} className='w-full' style={{ height: "60px" }} onContextMenu={(e) => e.preventDefault()} />
+                <div ref={overviewContainerRef} className='w-full' style={{ height: "60px" }} />
             </div>
 
             {/* Zoomed waveform (detailed editing) */}
             <div className='relative bg-[#1e1e1e]'>
-                <div className='flex items-center justify-between px-4 py-2 border-b border-[#333333]'>
-                    <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b]'>
-                        Detail View - Click segment dividers to select, right-click to delete
-                    </div>
-                    <div className='flex items-center gap-2'>
-                        <button onClick={zoomIn} className='btn-ghost p-1' title='Zoom in (+)'>
-                            <ZoomIn className='w-4 h-4' />
-                        </button>
-                        <span className='text-xs text-[#6b6b6b] font-mono min-w-[60px] text-center'>{zoomLevel}x</span>
-                        <button onClick={zoomOut} className='btn-ghost p-1' title='Zoom out (-)'>
-                            <ZoomOut className='w-4 h-4' />
-                        </button>
-                    </div>
-                </div>
                 <div
                     ref={zoomContainerRef}
-                    className='w-full relative'
-                    style={{ height: "180px" }}
+                    className={`w-full relative transition-all ${isDragOver ? 'ring-2 ring-[#8b5cf6] ring-inset bg-[#8b5cf6]/10' : ''}`}
+                    style={{ height: "140px" }}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                    onDrop={handleDrop}
                     onContextMenu={(e) => {
                         // Check if clicking near a boundary
                         const rect = zoomContainerRef.current?.getBoundingClientRect();
@@ -767,7 +945,7 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                         for (let i = 0; i < phonemes.length - 1; i++) {
                             const boundaryTime = phonemes[i].end;
                             if (Math.abs(clickTime - boundaryTime) < boundaryThreshold) {
-                                e.preventDefault();
+                                e.stopPropagation();
                                 setSelectedBoundaryIndex(i);
                                 setSelectedSegmentId(null);
                                 setContextMenu({
@@ -809,6 +987,15 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                         }
                     }}
                 />
+                
+                {/* Drop indicator */}
+                {isDragOver && dragDropTime !== null && (
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                        <div className="bg-[#8b5cf6]/90 text-white px-3 py-1.5 rounded-lg text-sm font-medium shadow-lg">
+                            Drop to insert at {dragDropTime.toFixed(2)}s
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Boundary info when selected */}
@@ -852,10 +1039,10 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
 
             {/* Selected segment info */}
             {selectedPhoneme && (
-                <div className='px-6 py-3 bg-[#242424] border-t border-[#333333]'>
+                <div className='px-6 py-2 bg-[#242424] border-t border-[#333333]'>
                     <div className='flex items-center gap-4'>
                         <div
-                            className='w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-white'
+                            className='w-7 h-7 rounded-lg flex items-center justify-center font-mono font-bold text-white text-sm'
                             style={{ backgroundColor: getSegmentColor(selectedPhoneme.value) }}
                         >
                             {selectedPhoneme.value}
@@ -871,34 +1058,6 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                     </div>
                 </div>
             )}
-
-            {/* Shape selector toolbar */}
-            <div className='px-6 py-4 border-t border-[#333333] bg-[#1a1a1a]'>
-                <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-3'>Quick Shape (1-9)</div>
-                <div className='flex gap-2 flex-wrap'>
-                    {mouthShapes.map((shape, i) => (
-                        <button
-                            key={shape}
-                            onClick={() => changeSelectedShape(shape)}
-                            disabled={!selectedSegmentId}
-                            className={`
-                relative w-12 h-12 rounded-lg flex flex-col items-center justify-center
-                font-mono font-bold transition-all
-                ${selectedPhoneme?.value === shape ? "ring-2 ring-white ring-offset-2 ring-offset-[#1a1a1a]" : ""}
-                ${selectedSegmentId ? "hover:scale-105 cursor-pointer" : "opacity-50 cursor-not-allowed"}
-              `}
-                            style={{
-                                backgroundColor: getSegmentColor(shape),
-                                color: "white",
-                            }}
-                            title={`${MOUTH_SHAPE_INFO[shape].name} (${i + 1})`}
-                        >
-                            <span className='text-lg'>{shape}</span>
-                            <span className='absolute bottom-1 right-1 text-[8px] opacity-60'>{i + 1}</span>
-                        </button>
-                    ))}
-                </div>
-            </div>
 
             {/* Playback and editing controls */}
             <div className='flex items-center gap-3 px-6 py-4 border-t border-[#333333]'>
@@ -981,58 +1140,6 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                 </div>
             </div>
 
-            {/* Keyboard shortcuts panel */}
-            {showShortcuts && (
-                <div className='px-6 py-4 border-t border-[#333333] bg-[#1a1a1a]'>
-                    <div className='grid grid-cols-2 md:grid-cols-4 gap-4 text-sm'>
-                        <div>
-                            <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-2'>Playback</div>
-                            <div className='space-y-1'>
-                                <Shortcut keys={["Space"]} action='Play/Pause' />
-                                <Shortcut keys={["←", "→"]} action='Prev/Next segment' />
-                                <Shortcut keys={["Shift", "←/→"]} action='Fine scrub' />
-                            </div>
-                        </div>
-                        <div>
-                            <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-2'>Editing</div>
-                            <div className='space-y-1'>
-                                <Shortcut keys={["S"]} action='Split at playhead' />
-                                <Shortcut keys={["M"]} action='Merge with next' />
-                                <Shortcut keys={["Del"]} action='Delete segment' />
-                            </div>
-                        </div>
-                        <div>
-                            <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-2'>Shapes</div>
-                            <div className='space-y-1'>
-                                <Shortcut keys={["1-9"]} action='Set shape A-H, X' />
-                            </div>
-                        </div>
-                        <div>
-                            <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-2'>View</div>
-                            <div className='space-y-1'>
-                                <Shortcut keys={["+", "-"]} action='Zoom in/out' />
-                                <Shortcut keys={["⌘Z"]} action='Undo' />
-                                <Shortcut keys={["⌘⇧Z"]} action='Redo' />
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Phoneme legend */}
-            <div className='px-6 py-4 border-t border-[#333333] bg-[#1a1a1a]'>
-                <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-3'>Mouth Shape Legend</div>
-                <div className='grid grid-cols-3 sm:grid-cols-5 md:grid-cols-9 gap-2'>
-                    {Object.entries(MOUTH_SHAPE_INFO).map(([shape, info]) => (
-                        <div key={shape} className='flex items-center gap-2 text-xs'>
-                            <div className='w-3 h-3 rounded' style={{ backgroundColor: info.color }} />
-                            <span className='text-[#a8a8a8] font-mono'>{shape}</span>
-                            <span className='text-[#4a4a4a] hidden lg:inline truncate'>{info.name}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
             {/* Context Menu for Segments */}
             {contextMenu &&
                 contextMenu.type === "segment" &&
@@ -1087,18 +1194,49 @@ export function PhonemeEditor({ audioUrl, phonemes, onPhonemesChange, duration, 
                                                         newPhonemes[index] = { ...newPhonemes[index], value: shape };
                                                         addToHistory(newPhonemes, `Change to ${shape}`);
                                                         onPhonemesChange(newPhonemes);
+                                                        setSelectedSegmentId(`segment-${index}`);
                                                         setContextMenu(null);
                                                     }}
                                                     className={`
-                          w-full h-10 rounded flex flex-col items-center justify-center
-                          font-mono font-bold text-xs transition-all
-                          ${segment.value === shape ? "ring-2 ring-[#8b5cf6]" : "hover:scale-105"}
-                        `}
+                                                        w-full h-10 rounded flex flex-col items-center justify-center
+                                                        font-mono font-bold text-xs transition-all
+                                                        ${segment.value === shape ? "ring-2 ring-[#8b5cf6]" : "hover:scale-105"}
+                                                    `}
                                                     style={{
                                                         backgroundColor: getSegmentColor(shape),
                                                         color: "white",
                                                     }}
                                                     title={MOUTH_SHAPE_INFO[shape].name}
+                                                >
+                                                    {shape}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className='h-px bg-[#333333] my-1' />
+
+                                    {/* Insert shape (splits and inserts new shape) */}
+                                    <div className='px-2 py-1'>
+                                        <div className='text-[10px] uppercase tracking-wider text-[#6b6b6b] px-2 py-1 flex items-center gap-1'>
+                                            <Plus className='w-3 h-3' />
+                                            Insert Shape
+                                        </div>
+                                        <div className='grid grid-cols-3 gap-1 p-1'>
+                                            {mouthShapes.map((shape) => (
+                                                <button
+                                                    key={shape}
+                                                    onClick={() => {
+                                                        const midTime = segment.start + (segment.end - segment.start) / 2;
+                                                        insertShapeAtTime(shape, midTime);
+                                                        setContextMenu(null);
+                                                    }}
+                                                    className='w-full h-10 rounded flex flex-col items-center justify-center font-mono font-bold text-xs transition-all hover:scale-105'
+                                                    style={{
+                                                        backgroundColor: getSegmentColor(shape),
+                                                        color: "white",
+                                                    }}
+                                                    title={`Insert ${MOUTH_SHAPE_INFO[shape].name}`}
                                                 >
                                                     {shape}
                                                 </button>

@@ -109,14 +109,26 @@ export function useAudioPlayback() {
     }
   }, [isPlaying, play, pause]);
 
-  // Seek to time
+  // Seek to time (updates both audio position and visual time)
   const seek = useCallback((time: number) => {
-    if (!audioRef.current) return;
+    const maxTime = audioRef.current?.duration || duration || Infinity;
+    const clampedTime = Math.max(0, Math.min(time, maxTime));
     
-    const clampedTime = Math.max(0, Math.min(time, audioRef.current.duration || 0));
-    audioRef.current.currentTime = clampedTime;
+    // Always update visual time for scrubbing preview
     setCurrentTime(clampedTime);
-  }, []);
+    
+    // Only update audio position if audio is loaded
+    if (audioRef.current && audioRef.current.readyState >= 1) {
+      audioRef.current.currentTime = clampedTime;
+    }
+  }, [duration]);
+
+  // Update visual time only (for external scrubbing without affecting audio)
+  const setVisualTime = useCallback((time: number) => {
+    const maxTime = audioRef.current?.duration || duration || Infinity;
+    const clampedTime = Math.max(0, Math.min(time, maxTime));
+    setCurrentTime(clampedTime);
+  }, [duration]);
 
   // Restart from beginning
   const restart = useCallback(() => {
@@ -165,6 +177,7 @@ export function useAudioPlayback() {
     pause,
     togglePlayPause,
     seek,
+    setVisualTime,
     restart,
     setVolume,
     reset,

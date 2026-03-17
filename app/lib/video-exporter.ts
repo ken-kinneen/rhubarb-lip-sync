@@ -11,7 +11,7 @@ import {
     AudioBufferSource,
 } from 'mediabunny';
 import { PhonemeData, MouthShape, MouthShapeConfig } from './types';
-import { loadMouthShapeConfig } from './mouth-shape-config';
+import { loadMouthShapeConfig, getDefaultMouthShape } from './mouth-shape-config';
 
 // Export settings
 const FRAME_RATE = 30;
@@ -43,9 +43,9 @@ export function isWebCodecsSupported(): boolean {
 /**
  * Get the current phoneme for a given timestamp
  */
-function getPhonemeAtTime(phonemes: PhonemeData[], time: number): MouthShape {
+function getPhonemeAtTime(phonemes: PhonemeData[], time: number, defaultShape?: MouthShape): MouthShape {
     const phoneme = phonemes.find(p => time >= p.start && time < p.end);
-    return phoneme?.value || 'X';
+    return phoneme?.value || defaultShape || getDefaultMouthShape();
 }
 
 interface ImageAssets {

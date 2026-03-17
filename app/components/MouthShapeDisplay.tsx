@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { PhonemeData, MouthShape, MouthShapeConfig } from '@/app/lib/types';
-import { loadMouthShapeConfig } from '@/app/lib/mouth-shape-config';
+import { loadMouthShapeConfig, getDefaultMouthShape } from '@/app/lib/mouth-shape-config';
 
 interface MouthShapeDisplayProps {
   phonemes: PhonemeData[];
@@ -12,23 +12,38 @@ interface MouthShapeDisplayProps {
 
 export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayProps) {
   const [mouthShapeConfig, setMouthShapeConfig] = useState<Record<MouthShape, MouthShapeConfig>>({} as Record<MouthShape, MouthShapeConfig>);
+  const [defaultShape, setDefaultShape] = useState<MouthShape>('X');
   
   // Load mouth shape configuration
   useEffect(() => {
-    setMouthShapeConfig(loadMouthShapeConfig());
+    const loadConfig = () => {
+      setMouthShapeConfig(loadMouthShapeConfig());
+      setDefaultShape(getDefaultMouthShape());
+    };
+
+    // Load on mount
+    loadConfig();
+
+    // Listen for config changes from Settings
+    window.addEventListener('mouthShapeConfigChanged', loadConfig);
+
+    return () => {
+      window.removeEventListener('mouthShapeConfigChanged', loadConfig);
+    };
   }, []);
   
   // Find current phoneme based on playback time
   const currentPhoneme = useMemo(() => {
     if (phonemes.length === 0) return null;
-    return phonemes.find(p => currentTime >= p.start && currentTime < p.end) || phonemes[0];
+    return phonemes.find(p => currentTime >= p.start && currentTime < p.end);
   }, [phonemes, currentTime]);
 
   if (phonemes.length === 0 || !mouthShapeConfig || Object.keys(mouthShapeConfig).length === 0) {
     return null;
   }
 
-  const currentShape = currentPhoneme?.value || 'X';
+  // Use the configurable default shape when no phoneme is active
+  const currentShape = currentPhoneme?.value || defaultShape;
   const config = mouthShapeConfig[currentShape];
   const shapeInfo = config?.info;
 
@@ -37,90 +52,74 @@ export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayPr
   }
 
   return (
-    <div className="card-base overflow-hidden h-full">
+    <div className="card-base overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-[#333333]">
-        <h2 className="text-lg font-semibold text-[#f5f5f5]">Current Shape</h2>
+      <div className="px-4 py-3 border-b border-[#333333]">
+        <h2 className="text-sm font-semibold text-[#f5f5f5] uppercase tracking-wider">Shape Editor</h2>
       </div>
 
-      {/* Large mouth shape display */}
-      <div className="p-6">
-        <div className="flex flex-col items-center justify-center py-6">
-          {/* Mouth-only image */}
-          <div className="mb-4 relative">
-            <div 
-              className="rounded-2xl overflow-hidden border-4 transition-all duration-100 shadow-2xl"
-              style={{ 
-                borderColor: shapeInfo.color,
-                boxShadow: `0 0 40px ${shapeInfo.color}40`,
-              }}
-            >
-              {config?.images?.mouthUrl ? (
-                <img
-                  src={config.images.mouthUrl}
-                  alt={`Mouth shape ${currentShape}: ${shapeInfo.name}`}
-                  width={200}
-                  height={200}
-                  className="bg-white object-contain"
-                />
-              ) : (
-                <div className="w-[200px] h-[200px] bg-[#1a1a1a] flex items-center justify-center text-4xl font-bold text-[#6b6b6b]">
-                  {currentShape}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Letter badge */}
-          <div
-            className="w-16 h-16 rounded-full flex items-center justify-center text-3xl font-bold transition-all duration-100 shadow-lg"
+      {/* Current shape - Horizontal compact layout */}
+      <div className="p-4 border-b border-[#333333]">
+        <div className="flex items-center gap-4">
+          {/* Mouth image */}
+          <div 
+            className="rounded-xl overflow-hidden border-3 transition-all duration-100 shadow-lg flex-shrink-0"
             style={{ 
-              backgroundColor: `${shapeInfo.color}20`,
-              color: shapeInfo.color,
-              border: `3px solid ${shapeInfo.color}`,
+              borderColor: shapeInfo.color,
               boxShadow: `0 0 20px ${shapeInfo.color}30`,
             }}
           >
-            {currentShape}
+            {config?.images?.mouthUrl ? (
+              <img
+                src={config.images.mouthUrl}
+                alt={`Mouth shape ${currentShape}: ${shapeInfo.name}`}
+                className="bg-white object-contain w-[80px] h-[80px]"
+              />
+            ) : (
+              <div className="w-[80px] h-[80px] bg-[#1a1a1a] flex items-center justify-center text-2xl font-bold text-[#6b6b6b]">
+                {currentShape}
+              </div>
+            )}
           </div>
-          
-          <div className="mt-4 text-center">
-            <div className="text-xl font-semibold text-[#f5f5f5]">
-              {shapeInfo.name}
+
+          {/* Shape info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0"
+                style={{ 
+                  backgroundColor: `${shapeInfo.color}20`,
+                  color: shapeInfo.color,
+                  border: `2px solid ${shapeInfo.color}`,
+                }}
+              >
+                {currentShape}
+              </div>
+              <div className="text-base font-semibold text-[#f5f5f5]">
+                {shapeInfo.name}
+              </div>
             </div>
-            <div className="text-sm text-[#6b6b6b] mt-1">
+            <div className="text-xs text-[#6b6b6b] mb-2">
               {shapeInfo.description}
             </div>
+            
+            {/* Timing info - inline */}
+            {currentPhoneme && (
+              <div className="flex items-center gap-4 text-xs">
+                <span className="text-[#6b6b6b]">
+                  <span className="text-[#8b5cf6] font-mono">{currentPhoneme.start.toFixed(2)}s</span> → <span className="text-[#8b5cf6] font-mono">{currentPhoneme.end.toFixed(2)}s</span>
+                </span>
+                <span className="text-[#6b6b6b]">
+                  (<span className="text-[#8b5cf6] font-mono">{((currentPhoneme.end - currentPhoneme.start) * 1000).toFixed(0)}ms</span>)
+                </span>
+              </div>
+            )}
           </div>
         </div>
-
-        {/* Current phoneme timing */}
-        {currentPhoneme && (
-          <div className="grid grid-cols-3 gap-3 p-4 bg-[#1e1e1e] rounded-xl mt-4">
-            <div className="text-center">
-              <div className="text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-1">Start</div>
-              <div className="text-sm font-mono text-[#8b5cf6]">
-                {currentPhoneme.start.toFixed(2)}s
-              </div>
-            </div>
-            <div className="text-center">
-              <div className="text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-1">End</div>
-              <div className="text-sm font-mono text-[#8b5cf6]">
-                {currentPhoneme.end.toFixed(2)}s
-              </div>
-            </div>
-            <div className="text-center">
-              <div className="text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-1">Length</div>
-              <div className="text-sm font-mono text-[#8b5cf6]">
-                {((currentPhoneme.end - currentPhoneme.start) * 1000).toFixed(0)}ms
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* All shapes grid */}
-      <div className="px-6 py-4 border-t border-[#333333] bg-[#1a1a1a]">
+      <div className="p-4 bg-[#1a1a1a]">
         <div className="text-[10px] uppercase tracking-wider text-[#6b6b6b] mb-3">
           All Shapes
         </div>
@@ -153,8 +152,6 @@ export function MouthShapeDisplay({ phonemes, currentTime }: MouthShapeDisplayPr
                     <img
                       src={shapeConfig.images.mouthUrl}
                       alt={`Shape ${shape}`}
-                      width={50}
-                      height={50}
                       className="bg-white object-contain w-[50px] h-[50px]"
                     />
                   ) : (

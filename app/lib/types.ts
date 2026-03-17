@@ -6,14 +6,34 @@
 // Phoneme Types
 // ============================================================================
 
-/** Rhubarb mouth shapes - represents different mouth positions */
-export type MouthShape = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'X';
+/** Standard Rhubarb mouth shapes - represents different mouth positions */
+export type StandardMouthShape = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'H' | 'X';
 
 /** Basic mouth shapes (always available) */
 export type BasicMouthShape = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 /** Extended mouth shapes (optional) */
 export type ExtendedMouthShape = 'G' | 'H' | 'X';
+
+/** 
+ * Custom viseme identifier - can be any string
+ * This allows for user-defined viseme sets beyond the standard 9
+ */
+export type CustomViseme = string;
+
+/**
+ * MouthShape can be either a standard Rhubarb shape or a custom viseme
+ * For backward compatibility, we keep the union type but allow string extension
+ */
+export type MouthShape = StandardMouthShape | CustomViseme;
+
+/** All standard mouth shapes as an array */
+export const STANDARD_MOUTH_SHAPES: StandardMouthShape[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'X'];
+
+/** Check if a shape is a standard Rhubarb shape */
+export function isStandardShape(shape: string): shape is StandardMouthShape {
+    return STANDARD_MOUTH_SHAPES.includes(shape as StandardMouthShape);
+}
 
 /** Phoneme data with timing information */
 export interface PhonemeData {
@@ -141,4 +161,36 @@ export interface RhubarbOptions {
    * - X: Silence/rest position
    */
   extendedShapes?: string;
+}
+
+// ============================================================================
+// Custom Viseme Types
+// ============================================================================
+
+/**
+ * Custom viseme definition
+ */
+export interface CustomVisemeDefinition {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+  mouthUrl?: string;
+  characterUrl?: string;
+  /** Which standard Rhubarb shape(s) this custom viseme maps from */
+  mappedFrom?: StandardMouthShape[];
+}
+
+/**
+ * Custom viseme set - a collection of user-defined visemes
+ */
+export interface CustomVisemeSet {
+  id: string;
+  name: string;
+  description?: string;
+  visemes: CustomVisemeDefinition[];
+  /** Mapping from standard Rhubarb shapes to custom visemes */
+  mapping: Record<StandardMouthShape, string>;
+  createdAt: number;
+  updatedAt: number;
 }

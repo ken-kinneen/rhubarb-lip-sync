@@ -119,6 +119,11 @@ export const DEFAULT_MOUTH_SHAPE_CONFIGS: Record<MouthShape, MouthShapeConfig> =
 export const MOUTH_SHAPE_CONFIG_STORAGE_KEY = 'rhubarbLipSync_mouthShapeConfig';
 
 /**
+ * Storage key for default mouth shape setting
+ */
+export const DEFAULT_MOUTH_SHAPE_STORAGE_KEY = 'rhubarbLipSync_defaultMouthShape';
+
+/**
  * Load mouth shape configuration from localStorage or return defaults
  */
 export function loadMouthShapeConfig(): Record<MouthShape, MouthShapeConfig> {
@@ -150,6 +155,8 @@ export function saveMouthShapeConfig(config: Record<MouthShape, MouthShapeConfig
 
     try {
         localStorage.setItem(MOUTH_SHAPE_CONFIG_STORAGE_KEY, JSON.stringify(config));
+        // Dispatch event to notify components of config change
+        window.dispatchEvent(new CustomEvent('mouthShapeConfigChanged'));
     } catch (error) {
         console.error('Failed to save mouth shape config to localStorage:', error);
     }
@@ -190,4 +197,41 @@ export function updateMouthShapeImages(
     };
     saveMouthShapeConfig(updatedConfig);
     return updatedConfig;
+}
+
+/**
+ * Get the default mouth shape (used when no phoneme is active)
+ */
+export function getDefaultMouthShape(): MouthShape {
+    if (typeof window === 'undefined') {
+        return 'X';
+    }
+
+    try {
+        const stored = localStorage.getItem(DEFAULT_MOUTH_SHAPE_STORAGE_KEY);
+        if (stored && ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'X'].includes(stored)) {
+            return stored as MouthShape;
+        }
+    } catch (error) {
+        console.error('Failed to load default mouth shape:', error);
+    }
+
+    return 'X';
+}
+
+/**
+ * Set the default mouth shape
+ */
+export function setDefaultMouthShape(shape: MouthShape): void {
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    try {
+        localStorage.setItem(DEFAULT_MOUTH_SHAPE_STORAGE_KEY, shape);
+        // Dispatch event to notify components of config change
+        window.dispatchEvent(new CustomEvent('mouthShapeConfigChanged'));
+    } catch (error) {
+        console.error('Failed to save default mouth shape:', error);
+    }
 }

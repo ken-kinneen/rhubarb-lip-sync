@@ -6,3 +6,5 @@ export { CharacterDisplay } from './CharacterDisplay';
 export { ResultsPanel } from './ResultsPanel';
 export { Settings } from './Settings';
 export { PhonemeEditor } from './PhonemeEditor';
+export { ShapePalette } from './ShapePalette';
+export { FloatingWindow } from './FloatingWindow';
